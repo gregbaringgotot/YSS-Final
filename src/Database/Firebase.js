@@ -1,8 +1,21 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, setDoc, onSnapshot, getDoc, updateDoc, } from "firebase/firestore";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  getDocs,
+  deleteDoc,
+  doc,
+  setDoc,
+  onSnapshot,
+  getDoc,
+  updateDoc,
+  query,
+  where,
+} from "firebase/firestore";
 import { getDatabase, ref, set } from "firebase/database";
-import axios from 'axios';
+import axios from "axios";
 
 // ✅ Firebase Configuration
 const firebaseConfig = {
@@ -27,7 +40,8 @@ export const realtimeDB = getDatabase(app); // Realtime Database
 // ✅ Firestore Collections
 export const lookbookCollection = collection(db, "lookbook"); // Lookbook Collection
 export const shopCollection = collection(db, "shop"); // Shop Collection
-export const userCartsCollection = (uid) => collection(db, "userCarts", uid, "cartItems"); 
+export const userCartsCollection = (uid) =>
+  collection(db, "userCarts", uid, "cartItems");
 export const userRef = (uid) => doc(db, "users", uid); // User data reference
 export const quotesCollection = collection(db, "quotes");
 
@@ -49,7 +63,9 @@ export const addToCart = async (uid, product) => {
     const cartRef = userCartsCollection(uid);
     if (cartRef) {
       // If product image is uploaded via Cloudinary, use the product's Cloudinary URL
-      const imageUrl = product.imageUrl || `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/${product.imagePublicId}.jpg`;
+      const imageUrl =
+        product.imageUrl ||
+        `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/${product.imagePublicId}.jpg`;
 
       // Add product to user's cart collection
       const productWithImage = {
@@ -90,7 +106,7 @@ export const getUserAddress = async (uid) => {
   try {
     const userDoc = await getDoc(userRef(uid));
     if (userDoc.exists()) {
-      return userDoc.data(); // Return the address data from user document
+      return userDoc.data().address || {}; // Return the address data from user document
     } else {
       console.log("No user data found");
       return {};
@@ -141,9 +157,14 @@ export const getCartItems = async (uid) => {
   }
 };
 
-export const removeCartItem = async (userUID, itemId) => {
+export const removeCartItem = async (uid, itemId) => {
+  if (!uid) {
+    console.error("No user UID provided");
+    return;
+  }
+
   try {
-    const cartItemRef = doc(db, "userCarts", userUID, "cartItems", itemId); // Reference to specific cart item
+    const cartItemRef = doc(db, "userCarts", uid, "cartItems", itemId); // Reference to specific cart item
     await deleteDoc(cartItemRef); // Delete document from Firestore
   } catch (error) {
     console.error("Error removing item from cart:", error);
@@ -151,6 +172,11 @@ export const removeCartItem = async (userUID, itemId) => {
 };
 
 export const onCartUpdate = (uid, callback) => {
+  if (!uid) {
+    console.error("No user UID provided");
+    return;
+  }
+
   const cartRef = userCartsCollection(uid);
   return onSnapshot(cartRef, (snapshot) => {
     const items = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -158,38 +184,68 @@ export const onCartUpdate = (uid, callback) => {
   });
 };
 
+// Clear the cart for a user
+export const clearCart = async (uid) => {
+  if (!uid) {
+    console.error("No user UID provided");
+    return;
+  }
 
-
-export const uploadQuoteImageToCloudinary = async (file) => {
   try {
-    const formData = new FormData();
-    formData.append('file', file); // The image file
-    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET_QUOTES); // Upload preset for quotes
-    formData.append('cloud_name', CLOUDINARY_CLOUD_NAME); // Your Cloudinary cloud name
+    const cartRef = userCartsCollection(uid);
+    const snapshot = await getDocs(cartRef);
 
-    const response = await axios.post(CLOUDINARY_UPLOAD_URL, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+    // Delete all cart items
+    snapshot.docs.forEach(async (doc) => {
+      await deleteDoc(doc.ref);
     });
 
-    // Check if the response contains a secure URL
-    if (response.data && response.data.secure_url) {
-      return response.data.secure_url; // Return the image URL after successful upload
+    console.log("Cart cleared successfully");
+  } catch (error) {
+    console.error("Error clearing cart:", error);
+  }
+};
+
+// Fetch a shop item by ID
+export const getShopItem = async (itemId) => {
+  try {
+    const itemRef = doc(db, "shop", itemId);
+    const itemSnap = await getDoc(itemRef);
+    if (itemSnap.exists()) {
+      return itemSnap.data();
     } else {
-      throw new Error('Image upload failed: Missing secure URL in response');
+      throw new Error("Item not found");
     }
   } catch (error) {
-    console.error('Error uploading quote image to Cloudinary:', error.message);
-    // Return a meaningful error message if upload fails
+    console.error("Error fetching shop item:", error);
     return null;
   }
 };
 
+// Update a shop item
+export const updateShopItem = async (itemId, newData) => {
+  try {
+    const itemRef = doc(db, "shop", itemId);
+    await updateDoc(itemRef, newData);
+    console.log("Shop item updated successfully");
+  } catch (error) {
+    console.error("Error updating shop item:", error);
+  }
+};
 
-// ✅ Firestore CRUD Functions with error handling
+// Save order to Firestore
+export const saveOrder = async (orderData) => {
+  try {
+    const ordersCollection = collection(db, "orders");
+    await addDoc(ordersCollection, orderData);
+    console.log("Order saved successfully!");
+  } catch (error) {
+    console.error("Error saving order:", error);
+    throw error;
+  }
+};
 
-// Add Quote to Firestore with Image URL (Cloudinary)
+
 export const addQuoteToFirestore = async (quoteData) => {
   try {
     await addDoc(quotesCollection, quoteData);  // Add to 'quotes' collection in Firestore
@@ -236,6 +292,7 @@ export const updateQuoteInFirestore = async (quoteId, updatedQuote) => {
   }
 };
 
-
+export const uploadQuoteImageToCloudinary = async (file) => {
+};
 
 export default app;

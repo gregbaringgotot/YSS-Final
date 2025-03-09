@@ -2,8 +2,7 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import Footer from './FooterLayout';
 import { useCart } from '../Layout/CartContext';
-import { ShoppingCart, User, Menu, X } from "lucide-react";
-
+import { ShoppingCart, User, Menu, X, Package } from "lucide-react"; // Import Package icon
 
 function NavbarLayout() {
   const location = useLocation();
@@ -124,6 +123,15 @@ function NavbarLayout() {
           </button>
 
           <div className="flex items-center">
+            {/* Order Icon */}
+            <NavLink
+              to="/orders"
+              className={({ isActive }) =>
+                `flex items-center justify-center h-16 px-2 md:px-4 relative transition-all ease-in-out duration-300 ${isActive ? 'text-gray-700 border-b-2 border-gray-700' : 'hover:text-gray-500 border-b-2 border-transparent hover:border-gray-700'}`
+              }
+            >
+              <Package size={24} className="text-black" />
+            </NavLink>
 
             {/* Cart Icon with Hover Effect and Active Line */}
             <NavLink

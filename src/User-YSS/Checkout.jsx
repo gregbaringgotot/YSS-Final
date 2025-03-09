@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, Edit, X, Save, ShoppingCart, Minus, Plus, BanknoteIcon, Lock } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
-import { updateUserAddress, getUserAddress } from '../Database/Firebase'; // Assuming you have an updateUserAddress function in Firebase
+import { Truck, Edit, X, Save, ShoppingCart, Minus, Plus, BanknoteIcon } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { updateUserAddress, getUserAddress, getShopItem, updateShopItem, clearCart, saveOrder } from '../Database/Firebase';
 
 function Checkout() {
   const location = useLocation();
-  const { cartItems, userUID } = location.state || { cartItems: [], userUID: '' };  // Get cart items and userUID from Navbar
-  
+  const navigate = useNavigate();
+  const { cartItems, userUID } = location.state || { cartItems: [], userUID: '' };
+
   // Get today's date in the correct format (yyyy-mm-dd)
   const getTodayDate = () => {
     const today = new Date();
@@ -15,41 +16,47 @@ function Checkout() {
     const yyyy = today.getFullYear();
     return `${yyyy}-${mm}-${dd}`;
   };
-  
+
   const [address, setAddress] = useState({
     name: '',
     phone: '',
     email: '',
     street: '',
     city: '',
-    deliveryDate: getTodayDate(), // Initialize with today's date by default
+    deliveryDate: getTodayDate(),
   });
   const [isEditing, setIsEditing] = useState(false);
   const [newAddress, setNewAddress] = useState(address);
-  const [cartItemsState, setCartItems] = useState(cartItems); // Add state for cart items
+  const [cartItemsState, setCartItems] = useState(cartItems);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+
+  // Fetch user address when the component mounts
   useEffect(() => {
-    // Fetch user address when the component mounts
     const fetchUserAddress = async () => {
       if (userUID) {
         try {
           const userAddress = await getUserAddress(userUID);
-          // If no delivery date is set in the user's address, set it to today
           const addressWithDefaultDate = {
             ...userAddress,
-            deliveryDate: userAddress.deliveryDate || getTodayDate()
+            deliveryDate: userAddress.deliveryDate || getTodayDate(),
           };
           setAddress(addressWithDefaultDate);
           setNewAddress(addressWithDefaultDate);
         } catch (error) {
           console.error('Error fetching user address:', error);
-          // If there's an error, still make sure we have a default date
-          setAddress(prev => ({...prev, deliveryDate: getTodayDate()}));
-          setNewAddress(prev => ({...prev, deliveryDate: getTodayDate()}));
+          setError('Failed to fetch address. Please try again.');
+          setAddress((prev) => ({ ...prev, deliveryDate: getTodayDate() }));
+          setNewAddress((prev) => ({ ...prev, deliveryDate: getTodayDate() }));
         }
+      } else {
+        setError('You must be logged in to place an order.');
+        navigate('/login'); // Redirect to login page if userUID is not available
       }
     };
     fetchUserAddress();
-  }, [userUID]);
+  }, [userUID, navigate]);
 
   const handleEditClick = () => {
     setIsEditing(true);
@@ -57,33 +64,40 @@ function Checkout() {
   };
 
   const handleSaveClick = async () => {
+    if (!newAddress.name || !newAddress.phone || !newAddress.email || !newAddress.street || !newAddress.city) {
+      setError('All fields are required.');
+      return;
+    }
+
     try {
-      // Make sure deliveryDate is never empty, use today's date as fallback
       const updatedAddress = {
         ...newAddress,
-        deliveryDate: newAddress.deliveryDate || getTodayDate()
+        deliveryDate: newAddress.deliveryDate || getTodayDate(),
       };
-      await updateUserAddress(userUID, updatedAddress); // Update user address in Firestore
-      setAddress(updatedAddress); // Update address state
+      await updateUserAddress(userUID, updatedAddress);
+      setAddress(updatedAddress);
       setIsEditing(false);
+      setError('');
     } catch (error) {
       console.error('Error updating user address:', error);
+      setError('Failed to update address. Please try again.');
     }
   };
 
   const handleClose = () => {
     setIsEditing(false);
+    setError('');
   };
 
   const incrementQuantity = (itemId) => {
-    const updatedCart = cartItemsState.map(item =>
+    const updatedCart = cartItemsState.map((item) =>
       item.id === itemId ? { ...item, quantity: item.quantity + 1 } : item
     );
     setCartItems(updatedCart);
   };
 
   const decrementQuantity = (itemId) => {
-    const updatedCart = cartItemsState.map(item =>
+    const updatedCart = cartItemsState.map((item) =>
       item.id === itemId && item.quantity > 1 ? { ...item, quantity: item.quantity - 1 } : item
     );
     setCartItems(updatedCart);
@@ -91,9 +105,63 @@ function Checkout() {
 
   const subtotal = cartItemsState.reduce((acc, item) => acc + item.price * item.quantity, 0);
 
-  const handleCheckout = () => {
-    // Handle checkout process (e.g., save order, process payment)
-    console.log("Checkout successfully placed!");
+  const handleCheckout = async () => {
+    if (!userUID) {
+      setError('You must be logged in to place an order.');
+      navigate('/login'); // Redirect to login page if userUID is not available
+      return;
+    }
+  
+    if (cartItemsState.length === 0) {
+      setError('Your cart is empty.');
+      return;
+    }
+  
+    setIsLoading(true);
+    setError('');
+    setSuccessMessage('');
+  
+    try {
+      // Deduct quantities from the shop database
+      for (const cartItem of cartItemsState) {
+        const shopItem = await getShopItem(cartItem.id); // Fetch the item from the shop database
+        if (shopItem) {
+          const updatedStocks = { ...shopItem.stocks };
+          if (updatedStocks[cartItem.size] < cartItem.quantity) {
+            throw new Error(`Not enough stock for ${cartItem.name} (Size: ${cartItem.size}).`);
+          }
+          updatedStocks[cartItem.size] -= cartItem.quantity; // Deduct the quantity for the selected size
+          await updateShopItem(cartItem.id, { stocks: updatedStocks }); // Update the shop database
+        }
+      }
+  
+      // Prepare order data
+      const orderData = {
+        userUID: userUID, // Include the user who placed the order
+        items: cartItemsState, // Include all cart items
+        address: address, // Include the shipping address
+        subtotal: subtotal, // Include the subtotal
+        status: "Placed", // Set the initial status
+        timestamp: new Date().toISOString(), // Include the order timestamp
+      };
+  
+      // Save the order to Firestore
+      await saveOrder(orderData);
+  
+      // Clear the cart for the user
+      await clearCart(userUID);
+  
+      // Show success message and navigate to confirmation page
+      setSuccessMessage('Order placed successfully!');
+      setTimeout(() => {
+        navigate('/order-confirmation', { state: { cartItems: cartItemsState, address } });
+      }, 2000);
+    } catch (error) {
+      console.error('Error during checkout:', error);
+      setError(error.message || 'An error occurred during checkout. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Format date as "Month day, year" (e.g., February 20, 2025)
@@ -113,17 +181,30 @@ function Checkout() {
       <div className="container mx-auto px-4 max-w-6xl mt-8">
         <h1 className="text-2xl font-bold mb-4 font-cousine">CHECKOUT</h1>
 
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+            {error}
+          </div>
+        )}
+
+        {/* Success Message */}
+        {successMessage && (
+          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-6">
+            {successMessage}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Section */}
           <div className="lg:col-span-2 space-y-6">
-
             {/* Shipping Address Section */}
             <div className="bg-white rounded-lg shadow-md p-6">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="font-bold text-lg flex items-center">
                   <Truck className="mr-2 text-gray-600" size={20} /> SHIPPING ADDRESS
                 </h2>
-                <button 
+                <button
                   onClick={handleEditClick}
                   className="flex items-center text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded transition duration-150"
                 >
@@ -136,7 +217,6 @@ function Checkout() {
                 <p className="text-gray-700">{address.email}</p>
                 <p className="text-gray-700">{address.street}</p>
                 <p className="text-gray-700">{address.city}</p>
-                {/* Always display the delivery date - it will always have at least today's date */}
                 <p className="text-gray-700">Delivery Date: {formatDeliveryDate(address.deliveryDate)}</p>
               </div>
             </div>
@@ -151,7 +231,7 @@ function Checkout() {
                   <div key={item.id} className="flex items-center justify-between mb-4">
                     <div className="flex items-center">
                       <div className="h-20 w-20 bg-gray-200 rounded-md mr-4 flex items-center justify-center">
-                        <img 
+                        <img
                           src={item.image || item.imageUrl}
                           alt={item.name}
                           className="object-cover h-full w-full rounded-md"
@@ -163,15 +243,15 @@ function Checkout() {
                       </div>
                     </div>
                     <div className="flex items-center border rounded-md">
-                      <button 
-                        onClick={() => decrementQuantity(item.id)} 
+                      <button
+                        onClick={() => decrementQuantity(item.id)}
                         className="px-3 py-1 text-gray-500 hover:bg-gray-100"
                       >
                         <Minus size={16} />
                       </button>
                       <span className="px-4 py-1 font-medium">{item.quantity}</span>
-                      <button 
-                        onClick={() => incrementQuantity(item.id)} 
+                      <button
+                        onClick={() => incrementQuantity(item.id)}
                         className="px-3 py-1 text-gray-500 hover:bg-gray-100"
                       >
                         <Plus size={16} />
@@ -193,7 +273,7 @@ function Checkout() {
                     <div className="h-2 w-2 bg-white rounded-full"></div>
                   </div>
                   <div className="flex items-center">
-                    <BanknoteIcon className="mr-2 text-black" size={18} /> 
+                    <BanknoteIcon className="mr-2 text-black" size={18} />
                     <span className="font-medium">CASH ON DELIVERY</span>
                   </div>
                 </div>
@@ -229,11 +309,12 @@ function Checkout() {
                     <p>₱{subtotal.toFixed(2)}</p>
                   </div>
                 </div>
-                <button 
-                  onClick={handleCheckout} 
-                  className="w-full bg-black hover:bg-gray-800 text-white font-medium py-3 rounded-md mt-4 transition duration-150"
+                <button
+                  onClick={handleCheckout}
+                  disabled={isLoading}
+                  className="w-full bg-black hover:bg-gray-800 text-white font-medium py-3 rounded-md mt-4 transition duration-150 disabled:bg-gray-400"
                 >
-                  Place Order
+                  {isLoading ? 'Placing Order...' : 'Place Order'}
                 </button>
               </div>
             </div>
@@ -251,85 +332,84 @@ function Checkout() {
                 <X size={20} />
               </button>
             </div>
-            
+
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                <input 
-                  type="text" 
-                  value={newAddress.name} 
-                  onChange={(e) => setNewAddress({ ...newAddress, name: e.target.value })} 
-                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none" 
-                  placeholder="Full Name" 
+                <input
+                  type="text"
+                  value={newAddress.name}
+                  onChange={(e) => setNewAddress({ ...newAddress, name: e.target.value })}
+                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none"
+                  placeholder="Full Name"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-                <input 
-                  type="text" 
-                  value={newAddress.phone} 
-                  onChange={(e) => setNewAddress({ ...newAddress, phone: e.target.value })} 
-                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none" 
-                  placeholder="Phone Number" 
+                <input
+                  type="text"
+                  value={newAddress.phone}
+                  onChange={(e) => setNewAddress({ ...newAddress, phone: e.target.value })}
+                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none"
+                  placeholder="Phone Number"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
-                <input 
-                  type="email" 
-                  value={newAddress.email} 
-                  onChange={(e) => setNewAddress({ ...newAddress, email: e.target.value })} 
-                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none" 
-                  placeholder="Email Address" 
+                <input
+                  type="email"
+                  value={newAddress.email}
+                  onChange={(e) => setNewAddress({ ...newAddress, email: e.target.value })}
+                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none"
+                  placeholder="Email Address"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Street Address</label>
-                <input 
-                  type="text" 
-                  value={newAddress.street} 
-                  onChange={(e) => setNewAddress({ ...newAddress, street: e.target.value })} 
-                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none" 
-                  placeholder="Street Address" 
+                <input
+                  type="text"
+                  value={newAddress.street}
+                  onChange={(e) => setNewAddress({ ...newAddress, street: e.target.value })}
+                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none"
+                  placeholder="Street Address"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                <input 
-                  type="text" 
-                  value={newAddress.city} 
-                  onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })} 
-                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none" 
-                  placeholder="City, Country Postal Code" 
+                <input
+                  type="text"
+                  value={newAddress.city}
+                  onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })}
+                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none"
+                  placeholder="City, Country Postal Code"
                 />
               </div>
-              
-              {/* Date Picker for Delivery Date */}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Delivery Date</label>
-                <input 
-                  type="date" 
-                  value={newAddress.deliveryDate || getTodayDate()} 
-                  onChange={(e) => setNewAddress({ ...newAddress, deliveryDate: e.target.value })} 
-                  min={getTodayDate()} // Setting the minimum date to today
-                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none" 
+                <input
+                  type="date"
+                  value={newAddress.deliveryDate || getTodayDate()}
+                  onChange={(e) => setNewAddress({ ...newAddress, deliveryDate: e.target.value })}
+                  min={getTodayDate()}
+                  className="border rounded-md w-full p-2 focus:ring-2 focus:ring-gray-500 focus:border-gray-500 outline-none"
                 />
               </div>
             </div>
-            
+
             <div className="flex justify-end mt-6 space-x-3">
-              <button 
-                onClick={handleClose} 
+              <button
+                onClick={handleClose}
                 className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition duration-150"
               >
                 Cancel
               </button>
-              <button 
-                onClick={handleSaveClick} 
+              <button
+                onClick={handleSaveClick}
                 className="flex items-center px-4 py-2 bg-black text-white rounded-md hover:bg-gray-700 transition duration-150"
               >
                 <Save className="mr-2" size={18} /> Save Address

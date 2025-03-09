@@ -20,6 +20,7 @@ import UserSignup from './User-YSS/UserSignup';
 import Checkout from './User-YSS/Checkout';
 import Cart from './User-YSS/Cart';
 import AdminQoutes from './Admin-YSS/AdminQuotes';
+import Order from './User-YSS/Order';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -63,9 +64,11 @@ function App() {
           <Route path="faq" element={<FAQ />} />
           <Route path="lookbook" element={<Lookbook />} />
           <Route path='cart' element={<Cart />} />
+          <Route path='orders' element={<Order />} />
           <Route path="checkout" element={<Checkout/>} />
           <Route path="UserSignIn" element={<UserSignIn logInHandler={logInHandler} />} />
           <Route path="UserSignUp" element={<UserSignup />} />
+          
 
         </Route>
       

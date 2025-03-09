@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { auth } from "../Database/Firebase"; // Firebase Authentication
 import { useNavigate } from "react-router-dom";
 import { ToastContainer, toast } from "react-toastify";
@@ -8,13 +8,13 @@ import "react-toastify/dist/ReactToastify.css";
 import backgroundImage from "../assets/SignIn-Images/SignIn.png";
 import { useCart } from "../Layout/CartContext"; // Make sure the path is correct
 
-
 function UserSignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
-  const { setUserUID } = useCart(); // Access to set the userUID
+  const { setUserUID, userUID } = useCart(); // Access to set the userUID
+
   // Toggle password visibility
   const togglePasswordVisibility = () => {
     setShowPassword((prev) => !prev);
@@ -23,15 +23,15 @@ function UserSignIn() {
   // Handle sign-in
   const handleSignIn = async (e) => {
     e.preventDefault();
-  
+
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
       const userUID = user.uid;
-  
+
       // Set the user UID in the Cart Context
       setUserUID(userUID);
-  
+
       toast.success("Sign In Successful!", {
         position: "top-right",
         autoClose: 1000,
@@ -42,11 +42,11 @@ function UserSignIn() {
         theme: "dark",
         style: { backgroundColor: "#111", color: "#fff" },
       });
-  
+
       // Redirect to the dashboard or home page after successful sign-in
       setTimeout(() => navigate("/dashboard"), 3500);
     } catch (error) {
-      console.error(error);  // Log the error for debugging
+      console.error(error); // Log the error for debugging
       let errorMessage;
       switch (error.code) {
         case "auth/user-not-found":
@@ -58,7 +58,7 @@ function UserSignIn() {
         default:
           errorMessage = "An error occurred during sign-in.";
       }
-  
+
       toast.error(errorMessage, {
         position: "top-right",
         autoClose: 3000,
@@ -72,7 +72,31 @@ function UserSignIn() {
       });
     }
   };
-  
+
+  // Persist user authentication state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // User is signed in, set the user UID in the Cart Context
+        setUserUID(user.uid);
+        // Redirect to the dashboard or home page if the user is already signed in
+        navigate("/dashboard");
+      } else {
+        // User is signed out, clear the user UID in the Cart Context
+        setUserUID(null);
+      }
+    });
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, [navigate, setUserUID]);
+
+  // Redirect if user is already logged in
+  useEffect(() => {
+    if (userUID) {
+      navigate("/dashboard");
+    }
+  }, [userUID, navigate]);
 
   return (
     <div className="flex min-h-screen bg-gray-100 md:flex-row flex-col-reverse">
