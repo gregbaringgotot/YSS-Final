@@ -100,9 +100,9 @@ function Shop() {
       setShowSignInModal(true); // If the user is not logged in, show the sign-in modal
       return; // Prevent adding the item to the cart if the user isn't logged in
     }
-
+  
     if (!selectedProduct) return;
-
+  
     const cartItem = {
       id: selectedProduct.id,
       name: selectedProduct.name,
@@ -111,16 +111,16 @@ function Shop() {
       quantity: selectedProduct.quantity,
       image: selectedProduct.image[0],
     };
-
+  
     try {
-      await addToCart(userUID, cartItem); // Call the addToCart function from Firebase to add the item to Firestore
+      await addToCart(userUID, cartItem); // Call the updated addToCart function
       setShowModal(false);
       showConfirmationModal("Item added to cart!");
     } catch (error) {
       console.error("Error adding to cart:", error);
     }
   };
-
+  
   const showConfirmationModal = (message) => {
     setConfirmationMessage(message);
     setShowConfirmation(true);
@@ -135,16 +135,16 @@ function Shop() {
       setShowSignInModal(true);
       return;
     }
-
+  
     const availableSizes = Object.entries(product.stocks || {})
       .filter(([size, stock]) => stock > 0)
       .map(([size]) => size);
-
+  
     if (availableSizes.length === 0) {
       showConfirmationModal("Item out of stock!");
       return;
     }
-
+  
     const cartItem = {
       id: product.id,
       name: product.name,
@@ -153,9 +153,9 @@ function Shop() {
       quantity: 1,
       image: product.image[0],
     };
-
+  
     try {
-      await addToCart(userUID, cartItem); // Call the addToCart function from Firebase for quick add
+      await addToCart(userUID, cartItem); // Call the updated addToCart function
       showConfirmationModal("Item added to cart!");
     } catch (error) {
       console.error("Error adding to cart:", error);

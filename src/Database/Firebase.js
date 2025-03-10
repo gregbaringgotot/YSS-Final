@@ -41,7 +41,7 @@ export const realtimeDB = getDatabase(app); // Realtime Database
 export const lookbookCollection = collection(db, "lookbook"); // Lookbook Collection
 export const shopCollection = collection(db, "shop"); // Shop Collection
 export const userCartsCollection = (uid) =>
-  collection(db, "userCarts", uid, "cartItems");
+  collection(db, "carts", uid, "cartsuid");
 export const userRef = (uid) => doc(db, "users", uid); // User data reference
 export const quotesCollection = collection(db, "quotes");
 
@@ -60,27 +60,35 @@ export const addToCart = async (uid, product) => {
   }
 
   try {
-    const cartRef = userCartsCollection(uid);
-    if (cartRef) {
-      // If product image is uploaded via Cloudinary, use the product's Cloudinary URL
-      const imageUrl =
-        product.imageUrl ||
-        `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/${product.imagePublicId}.jpg`;
+    const cartRef = doc(db, "carts", uid); // Reference to the user's cart document
+    const cartSnap = await getDoc(cartRef);
 
-      // Add product to user's cart collection
-      const productWithImage = {
-        ...product,
-        imageUrl,
-      };
-      await addDoc(cartRef, productWithImage); // Add product with image to user's cart collection
-      console.log("Product added to cart");
+    if (cartSnap.exists()) {
+      // If the cart exists, update the items array
+      const cartData = cartSnap.data();
+      const existingItems = cartData.items || [];
+      const existingItemIndex = existingItems.findIndex((item) => item.id === product.id && item.size === product.size);
+
+      if (existingItemIndex !== -1) {
+        // If the item already exists in the cart, update the quantity
+        existingItems[existingItemIndex].quantity += product.quantity;
+      } else {
+        // If the item doesn't exist, add it to the cart
+        existingItems.push(product);
+      }
+
+      await updateDoc(cartRef, { items: existingItems });
     } else {
-      console.error("Cart reference is invalid");
+      // If the cart doesn't exist, create a new cart with the item
+      await setDoc(cartRef, { items: [product] });
     }
+
+    console.log("Product added to cart");
   } catch (error) {
     console.error("Error adding item to cart:", error);
   }
 };
+
 
 export const saveUserToDatabase = async (uid, firstName, lastName, email) => {
   try {
@@ -142,15 +150,15 @@ export const getCartItems = async (uid) => {
   }
 
   try {
-    const cartRef = userCartsCollection(uid);
-    const snapshot = await getDocs(cartRef);
+    const cartRef = doc(db, "carts", uid);
+    const cartSnap = await getDoc(cartRef);
 
-    if (snapshot.empty) {
+    if (cartSnap.exists()) {
+      return cartSnap.data().items || [];
+    } else {
       console.log("No cart items found");
       return [];
     }
-
-    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
     console.error("Error fetching cart items:", error);
     return [];
@@ -164,8 +172,16 @@ export const removeCartItem = async (uid, itemId) => {
   }
 
   try {
-    const cartItemRef = doc(db, "userCarts", uid, "cartItems", itemId); // Reference to specific cart item
-    await deleteDoc(cartItemRef); // Delete document from Firestore
+    const cartRef = doc(db, "carts", uid);
+    const cartSnap = await getDoc(cartRef);
+
+    if (cartSnap.exists()) {
+      const cartData = cartSnap.data();
+      const updatedItems = cartData.items.filter((item) => item.id !== itemId);
+
+      await updateDoc(cartRef, { items: updatedItems });
+      console.log("Item removed from cart");
+    }
   } catch (error) {
     console.error("Error removing item from cart:", error);
   }
@@ -192,14 +208,8 @@ export const clearCart = async (uid) => {
   }
 
   try {
-    const cartRef = userCartsCollection(uid);
-    const snapshot = await getDocs(cartRef);
-
-    // Delete all cart items
-    snapshot.docs.forEach(async (doc) => {
-      await deleteDoc(doc.ref);
-    });
-
+    const cartRef = doc(db, "carts", uid);
+    await updateDoc(cartRef, { items: [] });
     console.log("Cart cleared successfully");
   } catch (error) {
     console.error("Error clearing cart:", error);

@@ -1,11 +1,12 @@
-import React from 'react';
-import { useCart } from '../Layout/CartContext';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trash2, Minus, Plus } from 'lucide-react';
-import { getAuth } from 'firebase/auth'; // Import Firebase Auth
+import { getAuth } from 'firebase/auth';
+import { doc, getDoc, updateDoc, onSnapshot } from "firebase/firestore";
+import { db } from "../Database/Firebase"; // Adjust the import path as needed
 
 function Cart() {
-  const { cartItems, removeFromCart, updateCartItemQuantity } = useCart();
+  const [cartItems, setCartItems] = useState([]); // Local state for cart items
   const navigate = useNavigate();
   const auth = getAuth(); // Initialize Firebase Auth
 
@@ -13,14 +14,79 @@ function Cart() {
   const user = auth.currentUser;
   const userUID = user ? user.uid : null;
 
-  const handleRemove = (itemId) => {
-    removeFromCart(itemId);
+  // Fetch cart items from Firestore
+  useEffect(() => {
+    if (!userUID) return; // Exit if user is not logged in
+
+    const fetchCartItems = async () => {
+      const cartRef = doc(db, "carts", userUID); // Reference to the user's cart document
+      const cartSnap = await getDoc(cartRef);
+
+      if (cartSnap.exists()) {
+        setCartItems(cartSnap.data().items || []); // Set cart items from Firestore
+      } else {
+        setCartItems([]); // If cart doesn't exist, set empty array
+      }
+    };
+
+    fetchCartItems();
+
+    // Optional: Set up a real-time listener for cart updates
+    const cartRef = doc(db, "carts", userUID);
+    const unsubscribe = onSnapshot(cartRef, (doc) => {
+      if (doc.exists()) {
+        setCartItems(doc.data().items || []);
+      } else {
+        setCartItems([]);
+      }
+    });
+
+    return () => unsubscribe(); // Clean up the listener on unmount
+  }, [userUID]);
+
+  // Handle Remove Item
+  const handleRemove = async (itemId) => {
+    if (!userUID) return;
+
+    try {
+      const cartRef = doc(db, "carts", userUID);
+      const cartSnap = await getDoc(cartRef);
+
+      if (cartSnap.exists()) {
+        const cartData = cartSnap.data();
+        const updatedItems = cartData.items.filter((item) => item.id !== itemId);
+
+        await updateDoc(cartRef, { items: updatedItems }); // Update Firestore
+        setCartItems(updatedItems); // Update local state
+      }
+    } catch (error) {
+      console.error("Error removing item from cart:", error);
+    }
   };
 
-  const handleUpdateQuantity = (itemId, quantity) => {
-    updateCartItemQuantity(itemId, quantity);
+  // Handle Update Quantity
+  const handleUpdateQuantity = async (itemId, quantity) => {
+    if (!userUID) return;
+
+    try {
+      const cartRef = doc(db, "carts", userUID);
+      const cartSnap = await getDoc(cartRef);
+
+      if (cartSnap.exists()) {
+        const cartData = cartSnap.data();
+        const updatedItems = cartData.items.map((item) =>
+          item.id === itemId ? { ...item, quantity } : item
+        );
+
+        await updateDoc(cartRef, { items: updatedItems }); // Update Firestore
+        setCartItems(updatedItems); // Update local state
+      }
+    } catch (error) {
+      console.error("Error updating item quantity:", error);
+    }
   };
 
+  // Handle Checkout
   const handleCheckout = () => {
     if (!userUID) {
       alert('You must be logged in to proceed to checkout.');
@@ -36,6 +102,7 @@ function Cart() {
     });
   };
 
+  // Handle Continue Shopping
   const handleContinueShopping = () => {
     navigate('/shop');
   };
